@@ -1,40 +1,34 @@
 # ------------------------------------------------------------------------------
-# Stage 1: Build Frontend Single Page App with Vite
+# Production Dockerfile for AI Resume Builder Backend API
 # ------------------------------------------------------------------------------
-FROM node:20-alpine AS builder
+FROM node:20-alpine AS runner
 
-WORKDIR /app
+# Create and define the application directory
+WORKDIR /usr/src/app
 
-# Install dependencies
+# Install curl/wget for healthcheck
+RUN apk add --no-cache curl
+
+# Set production environment
+ENV NODE_ENV=production
+ENV PORT=5000
+
+# Install production dependencies first (caching layer)
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy application source code
-COPY . .
+COPY server.js ./
 
-# Build production distribution bundle
-RUN npm run build
+# Security: run as unprivileged node user
+USER node
 
-# ------------------------------------------------------------------------------
-# Stage 2: Serve compiled SPA with hardened Nginx
-# ------------------------------------------------------------------------------
-FROM nginx:1.27-alpine AS runner
+# Expose internal API port
+EXPOSE 5000
 
-# Remove default nginx static assets
-RUN rm -rf /usr/share/nginx/html/*
+# Docker healthcheck targeting the production health endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:5000/api/v1/health || exit 1
 
-# Copy built static assets from builder stage
-COPY --from=builder /app/dist /usr/share/nginx/html
-
-# Copy custom Nginx configuration with reverse proxy & security headers
-COPY nginx.conf /etc/nginx/nginx.conf
-
-# Expose HTTP port
-EXPOSE 80
-
-# Healthcheck testing root endpoint response
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget --spider -q http://localhost/ || exit 1
-
-# Start Nginx in foreground
-CMD ["nginx", "-g", "daemon off;"]
+# Launch production server
+CMD ["node", "server.js"]
